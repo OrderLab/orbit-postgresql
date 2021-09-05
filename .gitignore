@@ -38,3 +38,9 @@ lib*.pc
 /Debug/
 /Release/
 /tmp_install/
+cscope.files
+cscope.in.out
+cscope.out
+cscope.po.out
+*.swp
+tags
