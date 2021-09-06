@@ -434,6 +434,14 @@ if test "$ac_env_CFLAGS_VECTOR_set" = set; then
   CFLAGS_VECTOR=$ac_env_CFLAGS_VECTOR_value
 fi
 
+if test "x$ORBITDIR" = x; then
+  AC_MSG_NOTICE([ORBITDIR environment variable not set, building PostgreSQL without orbit])
+else
+  ORBITSRC_INCLUDE="${ORBITDIR}/lib/include"
+  ORBITSRC_LIB="${ORBITDIR}/build/lib"
+  AC_DEFINE(HAVE_ORBIT, 1, [Define to 1 the orbit abstraction exists.])
+fi
+
 # Some versions of GCC support some additional useful warning flags.
 # Check whether they are supported, and add them to CFLAGS if so.
 # ICC pretends to be GCC but it's lying; it doesn't support these flags,
@@ -441,6 +449,12 @@ fi
 
 if test "$GCC" = yes -a "$ICC" = no; then
   CFLAGS="-Wall -Wmissing-prototypes -Wpointer-arith"
+  if test "x${ORBITSRC_INCLUDE}" != x; then
+    CFLAGS="-I${ORBITSRC_INCLUDE} $CFLAGS"
+    AC_MSG_NOTICE([with ORBITSRC_INCLUDE])
+  else
+    AC_MSG_NOTICE([without ORBITSRC_INCLUDE])
+  fi
   # These work in some but not all gcc versions
   PGAC_PROG_CC_CFLAGS_OPT([-Wdeclaration-after-statement])
   PGAC_PROG_CC_CFLAGS_OPT([-Wendif-labels])
@@ -898,6 +912,10 @@ AC_SUBST(ELF_SYS)
 CPPFLAGS="$CPPFLAGS $INCLUDES"
 LDFLAGS="$LDFLAGS $LIBDIRS"
 
+if test "x$ORBITSRC_LIB" != x; then
+  LDFLAGS="-L${ORBITSRC_LIB} $LDFLAGS"
+fi
+
 AC_ARG_VAR(LDFLAGS_EX, [extra linker flags for linking executables only])
 AC_ARG_VAR(LDFLAGS_SL, [extra linker flags for linking shared libraries only])
 
@@ -1150,6 +1168,10 @@ if test "$with_gssapi" = yes ; then
   else
     LIBS="$LIBS -lgssapi32"
   fi
+fi
+
+if test "x$ORBITSRC_LIB" != x; then
+  LIBS="-lorbit $LIBS"
 fi
 
 if test "$with_openssl" = yes ; then

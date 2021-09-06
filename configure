@@ -778,6 +778,7 @@ infodir
 docdir
 oldincludedir
 includedir
+runstatedir
 localstatedir
 sharedstatedir
 sysconfdir
@@ -900,6 +901,7 @@ datadir='${datarootdir}'
 sysconfdir='${prefix}/etc'
 sharedstatedir='${prefix}/com'
 localstatedir='${prefix}/var'
+runstatedir='${localstatedir}/run'
 includedir='${prefix}/include'
 oldincludedir='/usr/include'
 docdir='${datarootdir}/doc/${PACKAGE_TARNAME}'
@@ -1152,6 +1154,15 @@ do
   | -silent | --silent | --silen | --sile | --sil)
     silent=yes ;;
 
+  -runstatedir | --runstatedir | --runstatedi | --runstated \
+  | --runstate | --runstat | --runsta | --runst | --runs \
+  | --run | --ru | --r)
+    ac_prev=runstatedir ;;
+  -runstatedir=* | --runstatedir=* | --runstatedi=* | --runstated=* \
+  | --runstate=* | --runstat=* | --runsta=* | --runst=* | --runs=* \
+  | --run=* | --ru=* | --r=*)
+    runstatedir=$ac_optarg ;;
+
   -sbindir | --sbindir | --sbindi | --sbind | --sbin | --sbi | --sb)
     ac_prev=sbindir ;;
   -sbindir=* | --sbindir=* | --sbindi=* | --sbind=* | --sbin=* \
@@ -1289,7 +1300,7 @@ fi
 for ac_var in	exec_prefix prefix bindir sbindir libexecdir datarootdir \
 		datadir sysconfdir sharedstatedir localstatedir includedir \
 		oldincludedir docdir infodir htmldir dvidir pdfdir psdir \
-		libdir localedir mandir
+		libdir localedir mandir runstatedir
 do
   eval ac_val=\$$ac_var
   # Remove trailing slashes.
@@ -1442,6 +1453,7 @@ Fine tuning of the installation directories:
   --sysconfdir=DIR        read-only single-machine data [PREFIX/etc]
   --sharedstatedir=DIR    modifiable architecture-independent data [PREFIX/com]
   --localstatedir=DIR     modifiable single-machine data [PREFIX/var]
+  --runstatedir=DIR       modifiable per-process data [LOCALSTATEDIR/run]
   --libdir=DIR            object code libraries [EPREFIX/lib]
   --includedir=DIR        C header files [PREFIX/include]
   --oldincludedir=DIR     C header files for non-gcc [/usr/include]
@@ -4420,6 +4432,17 @@ if test "$ac_env_CFLAGS_VECTOR_set" = set; then
   CFLAGS_VECTOR=$ac_env_CFLAGS_VECTOR_value
 fi
 
+if test "x$ORBITDIR" = x; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: ORBITDIR environment variable not set, building PostgreSQL without orbit" >&5
+$as_echo "$as_me: ORBITDIR environment variable not set, building PostgreSQL without orbit" >&6;}
+else
+  ORBITSRC_INCLUDE="${ORBITDIR}/lib/include"
+  ORBITSRC_LIB="${ORBITDIR}/build/lib"
+
+$as_echo "#define HAVE_ORBIT 1" >>confdefs.h
+
+fi
+
 # Some versions of GCC support some additional useful warning flags.
 # Check whether they are supported, and add them to CFLAGS if so.
 # ICC pretends to be GCC but it's lying; it doesn't support these flags,
@@ -4427,6 +4450,14 @@ fi
 
 if test "$GCC" = yes -a "$ICC" = no; then
   CFLAGS="-Wall -Wmissing-prototypes -Wpointer-arith"
+  if test "x${ORBITSRC_INCLUDE}" != x; then
+    CFLAGS="-I${ORBITSRC_INCLUDE} $CFLAGS"
+    { $as_echo "$as_me:${as_lineno-$LINENO}: with ORBITSRC_INCLUDE" >&5
+$as_echo "$as_me: with ORBITSRC_INCLUDE" >&6;}
+  else
+    { $as_echo "$as_me:${as_lineno-$LINENO}: without ORBITSRC_INCLUDE" >&5
+$as_echo "$as_me: without ORBITSRC_INCLUDE" >&6;}
+  fi
   # These work in some but not all gcc versions
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether $CC supports -Wdeclaration-after-statement" >&5
 $as_echo_n "checking whether $CC supports -Wdeclaration-after-statement... " >&6; }
@@ -6401,6 +6432,10 @@ rm -f conftest*
 
 CPPFLAGS="$CPPFLAGS $INCLUDES"
 LDFLAGS="$LDFLAGS $LIBDIRS"
+
+if test "x$ORBITSRC_LIB" != x; then
+  LDFLAGS="-L${ORBITSRC_LIB} $LDFLAGS"
+fi
 
 
 
@@ -9643,6 +9678,10 @@ fi
   fi
 fi
 
+if test "x$ORBITSRC_LIB" != x; then
+  LIBS="-lorbit $LIBS"
+fi
+
 if test "$with_openssl" = yes ; then
     if test "$PORTNAME" != "win32"; then
      { $as_echo "$as_me:${as_lineno-$LINENO}: checking for CRYPTO_new_ex_data in -lcrypto" >&5
@@ -12227,7 +12266,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -12273,7 +12312,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -12297,7 +12336,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -12342,7 +12381,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -12366,7 +12405,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];

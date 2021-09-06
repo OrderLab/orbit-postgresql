@@ -44,3 +44,4 @@ cscope.out
 cscope.po.out
 *.swp
 tags
+autom4te.cache/

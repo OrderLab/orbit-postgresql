@@ -61,9 +61,14 @@
  */
 #include "postgres.h"
 
+#ifdef HAVE_ORBIT
+#include "orbit.h"
+#endif
+
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <unistd.h>
 #include <unistd.h>
 
 #include "access/heapam.h"
@@ -360,6 +365,11 @@ AutovacuumLauncherIAm(void)
 }
 #endif
 
+unsigned long autovacuum_orbit_entry(void *ret, void *args)
+{
+  return 0;
+}
+
 /*
  * Main entry point for autovacuum launcher process, to be called from the
  * postmaster.
@@ -369,6 +379,19 @@ StartAutoVacLauncher(void)
 {
 	pid_t		AutoVacPID;
 
+#ifdef HAVE_ORBIT
+  struct orbit_module *vac_orbit;
+  int status;
+  vac_orbit = orbit_create("autovacuum", autovacuum_orbit_entry, NULL);
+  if (vac_orbit == NULL)
+    ereport(LOG, (errmsg("could not create autovacuum orbit")));
+  status = orbit_destroy(vac_orbit->gobid);
+  if (status == 0)
+    ereport(LOG, (errmsg("autovacuum orbit destroyed")));
+  else
+    ereport(LOG, (errmsg("failed to destroy autovacuum orbit")));
+  return 0;
+#else
 #ifdef EXEC_BACKEND
 	switch ((AutoVacPID = avlauncher_forkexec()))
 #else
@@ -394,9 +417,9 @@ StartAutoVacLauncher(void)
 		default:
 			return (int) AutoVacPID;
 	}
-
 	/* shouldn't get here */
 	return 0;
+#endif
 }
 
 /*

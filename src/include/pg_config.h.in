@@ -384,6 +384,9 @@
 /* Define to 1 if you have the `OPENSSL_init_ssl' function. */
 #undef HAVE_OPENSSL_INIT_SSL
 
+/* Define to 1 the orbit abstraction exists. */
+#undef HAVE_ORBIT
+
 /* Define to 1 if you have the <ossp/uuid.h> header file. */
 #undef HAVE_OSSP_UUID_H
 
