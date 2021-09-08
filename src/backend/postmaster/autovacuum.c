@@ -327,6 +327,7 @@ static void avl_sigusr2_handler(SIGNAL_ARGS);
 static void avl_sigterm_handler(SIGNAL_ARGS);
 static void autovac_refresh_stats(void);
 
+static unsigned long autovacuum_orbit_entry(void *ret, void *args);
 
 
 /********************************************************************
@@ -367,7 +368,16 @@ AutovacuumLauncherIAm(void)
 
 unsigned long autovacuum_orbit_entry(void *ret, void *args)
 {
-  return 0;
+	int *init = (int *) args;
+	ereport(LOG, (errmsg("autovacuum orbit enters entry point")));
+	if (*init == 1) {
+		ereport(LOG, (errmsg("initialize autovacuum orbit")));
+		InitPostmasterChild();
+		/* Close the postmaster's sockets */
+		ClosePostmasterPorts(false);
+		AutoVacLauncherMain(0, NULL);
+	}
+	return 0;
 }
 
 /*
@@ -380,17 +390,18 @@ StartAutoVacLauncher(void)
 	pid_t		AutoVacPID;
 
 #ifdef HAVE_ORBIT
-  struct orbit_module *vac_orbit;
-  int status;
-  vac_orbit = orbit_create("autovacuum", autovacuum_orbit_entry, NULL);
-  if (vac_orbit == NULL)
-    ereport(LOG, (errmsg("could not create autovacuum orbit")));
-  status = orbit_destroy(vac_orbit->gobid);
-  if (status == 0)
-    ereport(LOG, (errmsg("autovacuum orbit destroyed")));
-  else
-    ereport(LOG, (errmsg("failed to destroy autovacuum orbit")));
-  return 0;
+	struct orbit_module *vac_orbit;
+	int init = 1;
+	vac_orbit = orbit_create("autovacuum", autovacuum_orbit_entry, NULL);
+	if (vac_orbit == NULL) {
+		ereport(LOG, (errmsg("could not create autovacuum orbit")));
+		return 0;
+	}
+	ereport(LOG, (errmsg("created orbit %d autovacuum launcher",
+					vac_orbit->gobid)));
+	AutoVacPID = vac_orbit->gobid;
+	orbit_call_async(vac_orbit, 0, 0, NULL, NULL, &init, sizeof(int), NULL);
+	return (int) AutoVacPID;
 #else
 #ifdef EXEC_BACKEND
 	switch ((AutoVacPID = avlauncher_forkexec()))

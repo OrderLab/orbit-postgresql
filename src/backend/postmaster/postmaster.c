@@ -65,6 +65,10 @@
 
 #include "postgres.h"
 
+#ifdef HAVE_ORBIT
+#include "orbit.h"
+#endif
+
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
@@ -3016,6 +3020,7 @@ reaper(SIGNAL_ARGS)
 		 */
 		if (pid == AutoVacPID)
 		{
+			ereport(LOG, (errmsg("autovacuum orbit %d exited with status %d", pid, exitstatus)));
 			AutoVacPID = 0;
 			if (!EXIT_STATUS_0(exitstatus))
 				HandleChildCrash(pid, exitstatus,
@@ -3612,6 +3617,9 @@ LogChildExit(int lev, const char *procname, int pid, int exitstatus)
 static void
 PostmasterStateMachine(void)
 {
+#ifdef HAVE_ORBIT
+	int status;
+#endif
 	/* If we're doing a smart shutdown, try to advance that state. */
 	if (pmState == PM_RUN || pmState == PM_HOT_STANDBY)
 	{
@@ -3647,8 +3655,18 @@ PostmasterStateMachine(void)
 		SignalSomeChildren(SIGTERM,
 						   BACKEND_TYPE_ALL - BACKEND_TYPE_WALSND);
 		/* and the autovac launcher too */
-		if (AutoVacPID != 0)
-			signal_child(AutoVacPID, SIGTERM);
+		if (AutoVacPID != 0) {
+#ifdef HAVE_ORBIT
+		ereport(LOG, (errmsg("destroying autovacuum orbit %d...", AutoVacPID)));
+		status = orbit_destroy(AutoVacPID);
+		if (status == 0)
+			ereport(LOG, (errmsg("autovacuum orbit %d destroyed", AutoVacPID)));
+		else
+			ereport(LOG, (errmsg("failed to destroy autovacuum orbit %d", AutoVacPID)));
+#else
+		signal_child(AutoVacPID, SIGTERM);
+#endif
+		}
 		/* and the bgwriter too */
 		if (BgWriterPID != 0)
 			signal_child(BgWriterPID, SIGTERM);
@@ -3968,6 +3986,7 @@ TerminateChildren(int signal)
 		signal_child(WalWriterPID, signal);
 	if (WalReceiverPID != 0)
 		signal_child(WalReceiverPID, signal);
+	// TODO: it might be better to replace this with orbit_destroy as well
 	if (AutoVacPID != 0)
 		signal_child(AutoVacPID, signal);
 	if (PgArchPID != 0)

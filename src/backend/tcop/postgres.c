@@ -2680,6 +2680,7 @@ die(SIGNAL_ARGS)
 void
 StatementCancelHandler(SIGNAL_ARGS)
 {
+  printf("StatementCancelHandler called\n");
 	int			save_errno = errno;
 
 	/*
