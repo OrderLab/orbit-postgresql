@@ -58,6 +58,11 @@ typedef struct MemoryContextCallback
  */
 extern PGDLLIMPORT MemoryContext CurrentMemoryContext;
 
+#ifdef HAVE_ORBIT
+extern struct orbit_allocator *ActiveOrbitAllocator;
+extern struct orbit_allocator *CurrentOrbitAllocator;
+#endif
+
 /*
  * Flags for MemoryContextAllocExtended.
  */

@@ -21,6 +21,10 @@
 
 #include "postgres.h"
 
+#ifdef HAVE_ORBIT
+#include "orbit.h"
+#endif
+
 #include "miscadmin.h"
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
@@ -35,6 +39,11 @@
  *		Default memory context for allocations.
  */
 MemoryContext CurrentMemoryContext = NULL;
+
+#ifdef HAVE_ORBIT
+struct orbit_allocator *ActiveOrbitAllocator = NULL;
+struct orbit_allocator *CurrentOrbitAllocator = NULL;
+#endif
 
 /*
  * Standard top-level contexts. For a description of the purpose of each
@@ -893,6 +902,11 @@ palloc(Size size)
 	/* duplicates MemoryContextAlloc to avoid increased overhead */
 	void	   *ret;
 
+#ifdef HAVE_ORBIT
+	if (CurrentOrbitAllocator != NULL)
+		return orbit_alloc(CurrentOrbitAllocator, size);
+#endif
+
 	AssertArg(MemoryContextIsValid(CurrentMemoryContext));
 	AssertNotInCriticalSection(CurrentMemoryContext);
 
@@ -992,6 +1006,12 @@ void
 pfree(void *pointer)
 {
 	MemoryContext context;
+#ifdef HAVE_ORBIT
+	if (orbit_allocated_by(pointer, ActiveOrbitAllocator)) {
+		orbit_free(ActiveOrbitAllocator, pointer);
+		return;
+	}
+#endif
 
 	/*
 	 * Try to detect bogus pointers handed to us, poorly though we can.

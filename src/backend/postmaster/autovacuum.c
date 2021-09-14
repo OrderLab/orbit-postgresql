@@ -63,6 +63,7 @@
 
 #ifdef HAVE_ORBIT
 #include "orbit.h"
+int autovac_orbit_init = 0;
 #endif
 
 #include <signal.h>
@@ -391,16 +392,17 @@ StartAutoVacLauncher(void)
 
 #ifdef HAVE_ORBIT
 	struct orbit_module *vac_orbit;
-	int init = 1;
-	vac_orbit = orbit_create("autovacuum", autovacuum_orbit_entry, NULL);
-	if (vac_orbit == NULL) {
-		ereport(LOG, (errmsg("could not create autovacuum orbit")));
-		return 0;
+	autovac_orbit_init++;
+	if (autovac_orbit_init < 3) {
+		vac_orbit = orbit_create("autovacuum", autovacuum_orbit_entry, NULL);
+		if (vac_orbit == NULL) {
+			ereport(LOG, (errmsg("could not create autovacuum orbit")));
+			return 0;
+		}
+		ereport(LOG, (errmsg("created orbit %d autovacuum launcher", vac_orbit->gobid)));
+		AutoVacPID = vac_orbit->gobid;
+		orbit_call_async(vac_orbit, 0, 0, NULL, NULL, &autovac_orbit_init, sizeof(int), NULL);
 	}
-	ereport(LOG, (errmsg("created orbit %d autovacuum launcher",
-					vac_orbit->gobid)));
-	AutoVacPID = vac_orbit->gobid;
-	orbit_call_async(vac_orbit, 0, 0, NULL, NULL, &init, sizeof(int), NULL);
 	return (int) AutoVacPID;
 #else
 #ifdef EXEC_BACKEND
@@ -1871,9 +1873,24 @@ get_database_list(void)
 	HeapScanDesc scan;
 	HeapTuple	tup;
 	MemoryContext resultcxt;
+#ifdef HAVE_ORBIT
+	struct orbit_pool *test_pool;
+	struct orbit_allocator *test_alloc;
+//	char *test_str;
+//	size_t test_len;
+#endif
 
 	/* This is the context that we will allocate our output data in */
 	resultcxt = CurrentMemoryContext;
+
+#ifdef HAVE_ORBIT
+	/* For testing purpose, we pass a null orbit. Thus, the pool is obtained
+	 * from regular mmap. Just checking if the allocation from the pool to
+	 * build the AV dblist works */
+	test_pool = orbit_pool_create(NULL, 16 * 1024);
+	test_alloc = orbit_allocator_from_pool(test_pool, false);
+	ActiveOrbitAllocator = test_alloc;
+#endif
 
 	/*
 	 * Start a transaction so we can access pg_database, and get a snapshot.
@@ -1902,6 +1919,18 @@ get_database_list(void)
 		 */
 		oldcxt = MemoryContextSwitchTo(resultcxt);
 
+#ifdef HAVE_ORBIT
+		/*
+		 * We can either do the explicit allocation with orbit_alloc or we can
+		 * set the CurrentOrbitAllocator for the palloc to use automatically.
+		 */
+		CurrentOrbitAllocator = test_alloc;
+//		avdb = (avw_dbase *) orbit_alloc(test_alloc, sizeof(avw_dbase));
+//		test_len = strlen(NameStr(pgdatabase->datname)) + 1;
+//		test_str = orbit_alloc(test_alloc, test_len);
+//		memcpy(test_str, NameStr(pgdatabase->datname), test_len);
+//		avdb->adw_name = test_str;
+#endif
 		avdb = (avw_dbase *) palloc(sizeof(avw_dbase));
 
 		avdb->adw_datid = HeapTupleGetOid(tup);
@@ -1912,6 +1941,11 @@ get_database_list(void)
 		avdb->adw_entry = NULL;
 
 		dblist = lappend(dblist, avdb);
+
+#ifdef HAVE_ORBIT
+		/* Follow the same convention */
+		CurrentOrbitAllocator = NULL;
+#endif
 		MemoryContextSwitchTo(oldcxt);
 	}
 
@@ -1919,7 +1953,9 @@ get_database_list(void)
 	heap_close(rel, AccessShareLock);
 
 	CommitTransactionCommand();
-
+#ifdef HAVE_ORBIT
+	ereport(LOG, (errmsg("allocated dblist from orbit pool!")));
+#endif
 	return dblist;
 }
 
