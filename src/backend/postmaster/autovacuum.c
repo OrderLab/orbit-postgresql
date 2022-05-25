@@ -287,6 +287,7 @@ typedef struct {
 
 typedef AutoVacuumShmemStruct AutoVacuumInfoStruct;
 static AutoVacuumInfoStruct *AutoVacuumInfo = NULL;
+static Size AutoVacuumInfoSize = 0;
 #endif
 
 static AutoVacuumShmemStruct *AutoVacuumShmem;
@@ -314,10 +315,10 @@ int avac_launcher_orbit_init = 0;
 int avac_worker_orbit_cnt = 0;
 dlist_head avac_worker_orbits = DLIST_STATIC_INIT(avac_worker_orbits);
 
-static void InitAutoVacummInfo(void);
+static void InitAutoVacuumInfo(void);
 #endif
 
-static void InitAutoVacummStruct(AutoVacuumShmemStruct *p);
+static void InitAutoVacuumStruct(AutoVacuumShmemStruct *p);
 
 #ifdef EXEC_BACKEND
 static pid_t avlauncher_forkexec(void);
@@ -402,15 +403,28 @@ AutovacuumLauncherIAm(void)
 }
 #endif
 
-#ifdef HAVE_ORBIT
-unsigned long avac_launcher_entry(void *ret, void *args)
+#ifdef DEBUG_ORBIT
+void
+_DebugBreakPoint()
 {
-	AutoVacuumInfoStruct *info = (AutoVacuumInfoStruct *) args;
-	ereport(LOG, (errmsg("autovacuum orbit enters entry point")));
-	ereport(LOG, (errmsg("av_launcherpid is %d", info->av_launcherpid)));
-	InitPostmasterChild();
-	/* Close the postmaster's sockets */
-	ClosePostmasterPorts(false);
+	// dummy function to set break point to during GDB session
+	ereport(LOG, (errmsg("reaching debug break point")));
+}
+#endif
+
+#ifdef HAVE_ORBIT
+unsigned long avac_launcher_entry(void *store, void *args)
+{
+	(void) store;
+
+	ereport(LOG, (errmsg("autovac launcher orbit enters entry point")));
+	ereport(LOG, (errmsg("AutoVacuumInfo current: %p, args: %p",
+					AutoVacuumInfo, *((AutoVacuumInfoStruct **) args))));
+
+	AutoVacuumInfo = *((AutoVacuumInfoStruct **) args);
+	AutoVacuumShmem = AutoVacuumInfo;
+	ereport(LOG, (errmsg("av_launcherpid is %d", AutoVacuumInfo->av_launcherpid)));
+
 #ifdef DEBUG_ORBIT
 	/*
 	 * To debug code in orbit, we sleep for a while here so that we
@@ -419,17 +433,39 @@ unsigned long avac_launcher_entry(void *ret, void *args)
 	ereport(LOG, (errmsg("sleep 30 seconds to wait for GDB attachment")));
 	sleep(30);
 	ereport(LOG, (errmsg("sleep finished")));
+	_DebugBreakPoint();
 #endif
+	InitPostmasterChild();
+	/* Close the postmaster's sockets */
+	ClosePostmasterPorts(false);
 	AutoVacLauncherMain(0, NULL);
 	return 0;
 }
 
 unsigned long avac_worker_entry(void *ret, void *args)
 {
+	AutoVacuumInfoStruct *info;
 	WorkerInfo	worker;
+	ereport(LOG, (errmsg("autovac orbit worker enters entry point")));
+	ereport(LOG, (errmsg("AutoVacuumInfo current: %p, args: %p",
+					AutoVacuumInfo, *((AutoVacuumInfoStruct **) args))));
 
-	worker = (WorkerInfo) args;
-	ereport(LOG, (errmsg("autovac worker orbit entry: dboid %u", worker->wi_dboid)));
+	info = *((AutoVacuumInfoStruct **) args);
+	worker = info->av_startingWorker;
+
+	if (info != AutoVacuumInfo) {
+		ereport(LOG, (errmsg("passed AutoVacuumInfo %p "
+						"differs from current %p", info,
+						AutoVacuumInfo)));
+	}
+	Assert(AutoVacuumInfo != NULL);
+	if (AutoVacuumInfo->av_startingWorker != worker) {
+		ereport(LOG, (errmsg("worker %p is different from starting_worker "
+						"%p in AutoVacuumInfo %p", worker,
+						AutoVacuumInfo->av_startingWorker, AutoVacuumInfo)));
+	}
+	Assert(AutoVacuumInfo->av_startingWorker->wi_dboid == worker->wi_dboid);
+	ereport(LOG, (errmsg("autovac worker orbit entry, dboid %u", worker->wi_dboid)));
 	InitPostmasterChild();
 	ClosePostmasterPorts(false);
 #ifdef DEBUG_ORBIT
@@ -457,22 +493,20 @@ StartAutoVacLauncher(void)
 #ifdef HAVE_ORBIT
 	avac_launcher_orbit_init++;
 	if (avac_launcher_orbit_init < 3) {
-		Size s;
-
-		s = AutoVacuumShmemSize();
+		AutoVacuumInfoSize = AutoVacuumShmemSize();
 		avac_launcher_orbit = orbit_create("avac_launcher", avac_launcher_entry, NULL);
 		if (avac_launcher_orbit == NULL) {
 			ereport(LOG, (errmsg("could not create autovacuum orbit")));
 			return 0;
 		}
 		ereport(LOG, (errmsg("created orbit %d autovacuum launcher", avac_launcher_orbit->gobid)));
-		avac_launcher_pool = orbit_pool_create(avac_launcher_orbit, s);
+		avac_launcher_pool = orbit_pool_create(avac_launcher_orbit, 4096);
 		avac_launcher_alloc = orbit_allocator_from_pool(avac_launcher_pool, false);
-		InitAutoVacummInfo();
+		InitAutoVacuumInfo();
 		AutoVacPID = avac_launcher_orbit->gobid;
 		AutoVacuumInfo->av_launcherpid = AutoVacPID;
 		orbit_call_async(avac_launcher_orbit, 0, 1, &avac_launcher_pool, NULL,
-				AutoVacuumInfo, s, &avac_launcher_task);
+				&AutoVacuumInfo, sizeof(AutoVacuumInfoStruct **), &avac_launcher_task);
 	}
 	return (int) AutoVacPID;
 #else
@@ -1202,8 +1236,6 @@ do_start_worker(void)
 	MemoryContext tmpcxt,
 				oldcxt;
 
-	ereport(LOG, (errmsg("starts autovacuum worker from launcher")));
-
 	/* return quickly when there are no free workers */
 	LWLockAcquire(AutovacuumLock, LW_SHARED);
 	if (dlist_is_empty(&AutoVacuumShmem->av_freeWorkers))
@@ -1353,13 +1385,23 @@ do_start_worker(void)
 	/* Found a database -- process it */
 	if (avdb != NULL)
 	{
-		WorkerInfo	worker;
-		dlist_node *wptr;
+		ereport(LOG, (errmsg("found a db, start autovacuum worker from launcher")));
 #ifdef HAVE_ORBIT
 		struct orbit_update *update;
-#endif
-		/* TODO: get rid of AutoVacuumShmem once we completes orbit port */
-
+		update = (struct orbit_update*) malloc(sizeof(struct orbit_update) + sizeof(Oid));
+		update->ptr = NULL;
+		update->length = sizeof(Oid);
+		*(Oid *)update->data = avdb->adw_datid;
+		// We only send the db id from the launcher orbit to the postmaster
+		// The postmaster side in StartAutoVacWorker will use the
+		// AutoVacuumInfo from the orbit pool to get a free worker for this
+		// dbid like the original version.
+		orbit_send(update);
+		ereport(LOG, (errmsg("sent orbit update of dboid %u", avdb->adw_datid)));
+		free(update);
+#else
+		WorkerInfo	worker;
+		dlist_node *wptr;
 		LWLockAcquire(AutovacuumLock, LW_EXCLUSIVE);
 
 		/*
@@ -1376,14 +1418,6 @@ do_start_worker(void)
 		AutoVacuumShmem->av_startingWorker = worker;
 
 		LWLockRelease(AutovacuumLock);
-#ifdef HAVE_ORBIT
-		update = (struct orbit_update*) malloc(sizeof(struct orbit_update) + sizeof(Oid));
-		update->ptr = NULL;
-		update->length = sizeof(Oid);
-		*(Oid *)update->data = avdb->adw_datid;
-		orbit_send(update);
-		ereport(LOG, (errmsg("sent orbit update of dboid %u", avdb->adw_datid)));
-		free(update);
 #endif
 		SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_WORKER);
 
@@ -1577,12 +1611,18 @@ StartAutoVacWorker(void)
 	ereport(LOG, (errmsg("received dboid %u from launcher orbit", dboid)));
 	free(update);
 
+	// Originally the popping of free worker is done by the launcher
+	// in do_start_worker() using the shared memory it connects with the postmaster.
+	// Since we get rid of the share memory, we use the AutoVacuumInfo instead inside
+	// the postmaster and send it to the launcher orbit.
 	wptr = dlist_pop_head_node(&AutoVacuumInfo->av_freeWorkers);
 	worker = dlist_container(WorkerInfoData, wi_links, wptr);
 	worker->wi_dboid = dboid;
 	worker->wi_proc = NULL;
 	worker->wi_launchtime = GetCurrentTimestamp();
 	AutoVacuumInfo->av_startingWorker = worker;
+	ereport(LOG, (errmsg("use free worker %p in AutoVacuumIn %p for the job",
+					worker, AutoVacuumInfo)));
 
 	/*
 	 * In the second step, we create an orbit worker.
@@ -1597,8 +1637,9 @@ StartAutoVacWorker(void)
 	}
 	ereport(LOG, (errmsg("created %s orbit %d", worker_name, ob->gobid)));
 	worker_pid = ob->gobid;
-	orbit_call_async(ob, 0, 1, &avac_launcher_pool, NULL, worker,
-			sizeof(WorkerInfoData), NULL);
+	// pass updated AutoVacuumInfo to the new worker orbit
+	orbit_call_async(ob, 0, 1, &avac_launcher_pool, NULL,
+			&AutoVacuumInfo, sizeof(AutoVacuumInfoStruct **), NULL);
 	/* TODO: insert ob into avac_worker_orbits list */
 	return (int) worker_pid;
 #else
@@ -3183,6 +3224,7 @@ AutoVacuumShmemSize(void)
 void
 AutoVacuumShmemInit(void)
 {
+#ifndef HAVE_ORBIT
 	bool		found;
 
 	AutoVacuumShmem = (AutoVacuumShmemStruct *)
@@ -3193,13 +3235,16 @@ AutoVacuumShmemInit(void)
 	if (!IsUnderPostmaster)
 	{
 		Assert(!found);
-		InitAutoVacummStruct(AutoVacuumShmem);
+		InitAutoVacuumStruct(AutoVacuumShmem);
 	}
 	else
 		Assert(found);
+#else
+	ereport(LOG, (errmsg("orbit version uses AutoVacuumInfo instead of AutoVacuumShmem")));
+#endif
 }
 
-static void InitAutoVacummStruct(AutoVacuumShmemStruct *p)
+static void InitAutoVacuumStruct(AutoVacuumShmemStruct *p)
 {
 		WorkerInfo	worker;
 		int			i;
@@ -3216,17 +3261,20 @@ static void InitAutoVacummStruct(AutoVacuumShmemStruct *p)
 }
 
 #ifdef HAVE_ORBIT
-static void InitAutoVacummInfo(void)
+static void InitAutoVacuumInfo(void)
 {
 	Assert(avac_launcher_pool && avac_launcher_alloc);
 	if (AutoVacuumInfo == NULL) {
-		Size s = AutoVacuumShmemSize();
-		AutoVacuumInfo = (AutoVacuumInfoStruct *) orbit_alloc(avac_launcher_alloc, s);
+		AutoVacuumInfo = (AutoVacuumInfoStruct *) orbit_alloc(avac_launcher_alloc, AutoVacuumInfoSize);
 		Assert(AutoVacuumInfo != NULL);
-		InitAutoVacummStruct(AutoVacuumInfo);
-		ereport(LOG, (errmsg("initialized AutoVacuumInfo (size %lu) in orbit pool", s)));
+		InitAutoVacuumStruct(AutoVacuumInfo);
+		ereport(LOG, (errmsg("initialized AutoVacuumInfo (size %lu) in orbit pool", AutoVacuumInfoSize)));
 	} else
 		ereport(LOG, (errmsg("AutoVacuumInfo already initialized")));
+	// To avoid changing all existing references to AutoVacuumShmem, we let
+	// AutoVacuumShmem alias to the orbit pool object AutoVacuumInfo
+	AutoVacuumShmem = AutoVacuumInfo;
+	ereport(LOG, (errmsg("AutoVacuumInfo is %p", AutoVacuumInfo)));
 }
 #endif
 
